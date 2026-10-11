@@ -2422,6 +2422,9 @@ foodf1
 foodf2
 foodfc
 
+@source:atari/garfield.cpp
+garfield
+
 @source:atari/gauntlet.cpp
 gaunt2
 gaunt22p
