@@ -52,12 +52,12 @@ void i82426ex_ib_device::device_add_mconfig(machine_config &config)
 	m_dma[1]->out_hreq_callback().set(FUNC(i82426ex_ib_device::dma2_hreq_w));
 	m_dma[1]->in_memr_callback().set(FUNC(i82426ex_ib_device::dma_read_word));
 	m_dma[1]->out_memw_callback().set(FUNC(i82426ex_ib_device::dma_write_word));
-	m_dma[1]->in_ior_callback<1>().set([this] () { return m_isabus->dack_r(5); });
-	m_dma[1]->in_ior_callback<2>().set([this] () { return m_isabus->dack_r(6); });
-	m_dma[1]->in_ior_callback<3>().set([this] () { return m_isabus->dack_r(7); });
-	m_dma[1]->out_iow_callback<1>().set([this] (u8 data) { m_isabus->dack_w(5, data); });
-	m_dma[1]->out_iow_callback<2>().set([this] (u8 data) { m_isabus->dack_w(6, data); });
-	m_dma[1]->out_iow_callback<3>().set([this] (u8 data) { m_isabus->dack_w(7, data); });
+	m_dma[1]->in_ior_callback<1>().set([this] () { u16 const ret = m_isabus->dack16_r(5); m_dma_high_byte = ret >> 8; return u8(ret); });
+	m_dma[1]->in_ior_callback<2>().set([this] () { u16 const ret = m_isabus->dack16_r(6); m_dma_high_byte = ret >> 8; return u8(ret); });
+	m_dma[1]->in_ior_callback<3>().set([this] () { u16 const ret = m_isabus->dack16_r(7); m_dma_high_byte = ret >> 8; return u8(ret); });
+	m_dma[1]->out_iow_callback<1>().set([this] (u8 data) { m_isabus->dack16_w(5, (m_dma_high_byte << 8) | data); });
+	m_dma[1]->out_iow_callback<2>().set([this] (u8 data) { m_isabus->dack16_w(6, (m_dma_high_byte << 8) | data); });
+	m_dma[1]->out_iow_callback<3>().set([this] (u8 data) { m_isabus->dack16_w(7, (m_dma_high_byte << 8) | data); });
 	m_dma[1]->out_dack_callback<0>().set([this] (int state) { m_dma[0]->hack_w(state ? 0 : 1); });
 	m_dma[1]->out_dack_callback<1>().set([this] (int state) { set_dma_channel(5, state); });
 	m_dma[1]->out_dack_callback<2>().set([this] (int state) { set_dma_channel(6, state); });
@@ -305,7 +305,7 @@ void i82426ex_ib_device::dma_write_word(offs_t offset, u8 data)
 		return;
 	address_space &prog_space = m_host_cpu->space(AS_PROGRAM);
 
-	prog_space.write_word((page_offset() & 0xfe0000) | (offset << 1), m_dma_high_byte | data);
+	prog_space.write_word((page_offset() & 0xfe0000) | (offset << 1), (m_dma_high_byte << 8) | data);
 }
 
 void i82426ex_ib_device::dma1_eop_w(int state)
