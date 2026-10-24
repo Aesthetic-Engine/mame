@@ -349,10 +349,15 @@ uint32_t redalert_state::screen_update_demoneye(screen_device &screen, bitmap_rg
 
 	get_demoneye_pens(pens);
 
+	bool const flipscreen = BIT(*m_video_control, 2);
+
 	for (offs_t offs = 0; offs < 0x2000; offs++)
 	{
 		uint8_t y = offs & 0xff;
 		uint8_t x = (~offs >> 8) << 3;
+		int const y_dst = flipscreen ? (y ^ 0xff) : y;
+		if (y_dst < cliprect.min_y || y_dst > cliprect.max_y)
+			continue;
 
 		uint8_t bitmap_data = m_bitmap_videoram[offs];
 		uint8_t bitmap_color = m_bitmap_colorram[offs >> 3];
@@ -379,20 +384,21 @@ uint32_t redalert_state::screen_update_demoneye(screen_device &screen, bitmap_rg
 
 		for (int i = 0; i < 8; i++)
 		{
-			int bitmap_bit = bitmap_data & 0x80;
-			uint8_t color_prom_a0_a1 = ((charmap_data_2 & 0x80) >> 6) | ((charmap_data_1 & 0x80) >> 7);
-
-			/* determine priority */
-			pen_t pen;
-			if ((color_prom_a0_a1 == 0) || (bitmap_bit && ((charmap_code & 0xc0) == 0xc0)))
-				pen = bitmap_bit ? pens[NUM_CHARMAP_PENS + bitmap_color] : pens[NUM_CHARMAP_PENS + NUM_BITMAP_PENS];
-			else
-				pen = pens[((charmap_code & 0xfe) << 1) | color_prom_a0_a1];
-
-			int const x_dst = (*m_video_control & 0x04) ? (x ^ 0xff) : x;
-			int const y_dst = (*m_video_control & 0x04) ? (y ^ 0xff) : y;
+			int const x_dst = flipscreen ? (x ^ 0xff) : x;
 			if (cliprect.contains(x_dst, y_dst))
+			{
+				bool const bitmap_bit = BIT(bitmap_data, 7);
+				uint8_t const color_prom_a0_a1 = (BIT(charmap_data_2, 7) << 1) | BIT(charmap_data_1, 7);
+
+				/* determine priority */
+				pen_t pen;
+				if ((color_prom_a0_a1 == 0) || (bitmap_bit && ((charmap_code & 0xc0) == 0xc0)))
+					pen = bitmap_bit ? pens[NUM_CHARMAP_PENS + bitmap_color] : pens[NUM_CHARMAP_PENS + NUM_BITMAP_PENS];
+				else
+					pen = pens[((charmap_code & 0xfe) << 1) | color_prom_a0_a1];
+
 				bitmap.pix(y_dst, x_dst) = pen;
+			}
 
 			/* next pixel */
 			x++;
@@ -403,54 +409,45 @@ uint32_t redalert_state::screen_update_demoneye(screen_device &screen, bitmap_rg
 		}
 	}
 
-	u8 x = m_demoneye_bitmap_reg[0];
-	u8 y = m_demoneye_bitmap_yoffs;
-	u8 control = m_demoneye_bitmap_reg[1];
+	u8 const x = m_demoneye_bitmap_reg[0];
+	u8 const y = m_demoneye_bitmap_yoffs;
+	u8 const control = m_demoneye_bitmap_reg[1];
 
-
-	if(control&1)
+	if (BIT(control, 0))
 	{
 		// TODO: pinpoint what the unknown bits are for (more zooming? color offset?)
 		// Note: boss second form has even more offsetted collision (hence bigger?)
-		int width = (control&2)?8:4;
-		int base = 0x1400;
-		base += (control & 0x10) ? 0x20 : 0;
-		base += (m_demoneye_bitmap_reg[2] & 3) * 0x100;
+		int const width = BIT(control, 1) ? 8 : 4;
+		int const base = 0x1400 + (BIT(control, 4) << 5) + ((m_demoneye_bitmap_reg[2] & 3) << 8);
 
-		for(int x_block=0; x_block<8; ++x_block)
+		for (int x_block = 0; x_block < width; ++x_block)
 		{
-			for(int y_block=0; y_block<8; ++y_block)
+			for (int y_block = 0; y_block < width; ++y_block)
 			{
-				if(y_block<width && x_block<width)
+				int const tile_base = base + (x_block * 8 + y_block) * 8;
+				for (int iy = 0; iy < 8; ++iy)
 				{
-					for(int iy=0;iy<8;++iy)
-					{
-						int l0 = m_charmap_videoram[base+iy];
-						int l1 = m_charmap_videoram[base+0x400+iy];
-						int l2 = m_charmap_videoram[base+0x800+iy];
-						for(int ix=0;ix<8;++ix)
-						{
-							int ccc = ((l0&0x80)>>5) | ((l1&0x80)>>6) | ((l2&0x80)>>7);
-							if(ccc)
-							{
-								// both are clearly reversed,
-								// cfr. boss first form (when opens the eye)
-								// or second form (follows player position)
-								int y_dst = 8*width - (y_block*8+iy);
-								int x_dst = -(x_block*8+7-ix);
-								ccc=pens[NUM_CHARMAP_PENS+ccc];
-								if (cliprect.contains(x+x_dst, y+y_dst))
-									bitmap.pix(y+y_dst, x+x_dst) = ccc;
-							}
+					// both are clearly reversed,
+					// cfr. boss first form (when opens the eye)
+					// or second form (follows player position)
+					int const y_dst = y + 8 * width - (y_block * 8 + iy);
+					if (y_dst < cliprect.min_y || y_dst > cliprect.max_y)
+						continue;
 
-							l0<<=1;
-							l1<<=1;
-							l2<<=1;
-						}
+					u8 const l0 = m_charmap_videoram[tile_base + iy];
+					u8 const l1 = m_charmap_videoram[tile_base + 0x400 + iy];
+					u8 const l2 = m_charmap_videoram[tile_base + 0x800 + iy];
+					for (int ix = 0; ix < 8; ++ix)
+					{
+						int const x_dst = x - (x_block * 8 + 7 - ix);
+						if (!cliprect.contains(x_dst, y_dst))
+							continue;
+
+						u8 const color = (BIT(l0, 7 - ix) << 2) | (BIT(l1, 7 - ix) << 1) | BIT(l2, 7 - ix);
+						if (color)
+							bitmap.pix(y_dst, x_dst) = pens[NUM_CHARMAP_PENS + color];
 					}
 				}
-
-				base+=8;
 			}
 		}
 	}
